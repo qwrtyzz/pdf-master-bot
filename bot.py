@@ -1,11 +1,13 @@
 import os
 import asyncio
 import logging
+import sqlite3
+from datetime import datetime
 from io import BytesIO
 
-import httpx
 from PIL import Image
 from dotenv import load_dotenv
+from deep_translator import MyMemoryTranslator
 
 from telegram import (
     Update,
@@ -25,7 +27,7 @@ from telegram.ext import (
 # .env faylından dəyişənləri oxumaq
 load_dotenv()
 
-# Professional Loqlaşdırma (Logging) tənzimləməsi
+# Loqlaşdırma tənzimləməsi
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -44,6 +46,70 @@ LANGUAGES = {
     "ar": ("Arabic", "ar"),
 }
 
+# --- BAZA (DATABASE) TƏNZİMLƏMƏLƏRİ ---
+def init_db():
+    conn = sqlite3.connect("users.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            pdf_count INTEGER DEFAULT 0,
+            translate_count INTEGER DEFAULT 0,
+            last_date TEXT,
+            is_vip INTEGER DEFAULT 0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+def check_and_update_limit(user_id: int, action: str):
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("users.db")
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT pdf_count, translate_count, last_date, is_vip FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    
+    if not row:
+        cursor.execute("INSERT INTO users (user_id, pdf_count, translate_count, last_date, is_vip) VALUES (?, 0, 0, ?, 0)", (user_id, today))
+        conn.commit()
+        pdf_c, trans_c, last_d, is_vip = 0, 0, today, 0
+    else:
+        pdf_c, trans_c, last_d, is_vip = row
+        if last_d != today:
+            pdf_c, trans_c = 0, 0
+            cursor.execute("UPDATE users SET pdf_count = 0, translate_count = 0, last_date = ? WHERE user_id = ?", (today, user_id))
+            conn.commit()
+
+    if is_vip == 1:
+        conn.close()
+        return True, "VIP"
+
+    if action == "pdf":
+        if pdf_c >= 3:
+            conn.close()
+            return False, "Limit"
+        cursor.execute("UPDATE users SET pdf_count = pdf_count + 1 WHERE user_id = ?", (user_id,))
+    elif action == "translate":
+        if trans_c >= 3:
+            conn.close()
+            return False, "Limit"
+        cursor.execute("UPDATE users SET translate_count = translate_count + 1 WHERE user_id = ?", (user_id,))
+
+    conn.commit()
+    conn.close()
+    return True, "OK"
+
+def get_vip_status(user_id: int):
+    conn = sqlite3.connect("users.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT is_vip FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row and row[0] == 1
+
 
 async def setup_commands(app):
     await app.bot.delete_my_commands()
@@ -53,6 +119,7 @@ async def setup_commands(app):
         BotCommand("multiple", "multiple photos"),
         BotCommand("create", "create pdf"),
         BotCommand("translate", "translate"),
+        BotCommand("vip", "buy VIP status"),
         BotCommand("cancel", "cancel"),
         BotCommand("help", "help"),
     ])
@@ -65,7 +132,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🌍 Welcome to PDF Master!\n\n"
+        "📊 **Pulsuz Limit:** Günlük 3 PDF və 3 Tərcümə.\n"
+        "⭐ Limitsiz istifadə üçün /vip əmrini seçin.\n\n"
         "Use the / command menu to choose a feature."
+    )
+
+
+async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    buttons = [
+        [InlineKeyboardButton("📅 Aylıq Abunə - $1.99", callback_data="buy_monthly")],
+        [InlineKeyboardButton("🌟 İllik Abunə - $20.00", callback_data="buy_yearly")],
+    ]
+    await update.message.reply_text(
+        "💎 **VIP ABUNƏLİK**\n\n"
+        "VIP statusu ilə bütün günlük limitləri qaldırın:\n"
+        "✔️ Sərhədsiz PDF çevirmə\n"
+        "✔️ Sərhədsiz tərcümə\n"
+        "✔️ Prioritet dəstək\n\n"
+        "Plan seçin:",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+async def select_vip_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    plan = "Aylıq ($1.99)" if query.data == "buy_monthly" else "İllik ($20.00)"
+    
+    await query.edit_message_text(
+        f"💳 Seçdiyiniz plan: **{plan}**\n\n"
+        "Ödəniş etmək və ya test məqsədilə VIP statusu aktivləşdirmək üçün adminlə əlaqə saxlayın:\n"
+        "👉 @AdminAcarSoz (və ya ödəniş kartı məlumatlarını bura daxil edə bilərsiniz)."
     )
 
 
@@ -170,7 +267,16 @@ def make_pdf(image_data):
             image.close()
 
 
-async def send_pdf(context, chat_id, image_data):
+async def send_pdf(context, chat_id, user_id, image_data):
+    allowed, status = check_and_update_limit(user_id, "pdf")
+    if not allowed:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Günlük pulsuz PDF limitiniz bitdi (3/3)!\n"
+                 "Sərhədsiz istifadə üçün /vip abunəliyinə keçin."
+        )
+        return
+
     output = make_pdf(image_data)
     await context.bot.send_document(
         chat_id=chat_id,
@@ -202,6 +308,15 @@ async def process_album(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_i
             image_data.append(data.getvalue())
 
         if mode == "multiple":
+            allowed, status = check_and_update_limit(user_id, "pdf")
+            if not allowed:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="❌ Günlük pulsuz PDF limitiniz bitdi (3/3)!\n"
+                         "Sərhədsiz istifadə üçün /vip abunəliyinə keçin."
+                )
+                return
+
             user_data.setdefault("images", []).extend(image_data)
 
             await context.bot.send_message(
@@ -214,7 +329,7 @@ async def process_album(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_i
             )
 
         elif mode == "single":
-            await send_pdf(context, chat_id, image_data)
+            await send_pdf(context, chat_id, user_id, image_data)
 
         else:
             await context.bot.send_message(
@@ -262,13 +377,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         image_bytes = data.getvalue()
 
         if mode == "multiple":
-            context.user_data.setdefault("images", []).append(image_bytes)
+            user_data = context.user_data
+            user_data.setdefault("images", []).append(image_bytes)
             await message.reply_text(
-                f"✅ Image added. Total collected: {len(context.user_data['images'])}.\n"
+                f"✅ Image added. Total collected: {len(user_data['images'])}.\n"
                 "Send more images or use /create."
             )
         else:
-            await send_pdf(context, chat_id, [image_bytes])
+            await send_pdf(context, chat_id, user_id, [image_bytes])
 
     except Exception as error:
         logger.error(f"Image processing failed: {error}")
@@ -291,7 +407,10 @@ async def create_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        await send_pdf(context, update.effective_chat.id, images)
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        
+        await send_pdf(context, chat_id, user_id, images)
         context.user_data["images"] = []
         context.user_data["mode"] = None
 
@@ -304,6 +423,7 @@ async def create_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    user_id = update.effective_user.id
     mode = context.user_data.get("mode")
 
     if mode == "translate":
@@ -315,7 +435,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        status = await update.message.reply_text("🌐 Translating...")
+        # Limit yoxlanışı
+        allowed, status = check_and_update_limit(user_id, "translate")
+        if not allowed:
+            await update.message.reply_text(
+                "❌ Günlük pulsuz tərcümə limitiniz bitdi (3/3)!\n"
+                "Sərhədsiz istifadə üçün /vip abunəliyinə keçin."
+            )
+            return
+
+        status_msg = await update.message.reply_text("🌐 Translating...")
 
         try:
             url = "https://api.mymemory.translated.net/get"
@@ -332,19 +461,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not result:
                 result = "Translation not found."
 
-            await status.edit_text(
+            await status_msg.edit_text(
                 f"🌐 {LANGUAGES[target][0]} translation:\n\n{result}"
             )
 
         except httpx.TimeoutError:
-            await status.edit_text(
+            await status_msg.edit_text(
                 "❌ Translation timed out.\n"
                 "Server did not respond in time, please try again."
             )
 
         except Exception as error:
             logger.error(f"Translation failed: {error}")
-            await status.edit_text(
+            await status_msg.edit_text(
                 "❌ Translation failed.\n"
                 f"Error: {type(error).__name__}: {error}"
             )
@@ -379,9 +508,27 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/multiple - Collect photos into one PDF\n"
         "/create - Create one PDF from collected photos\n"
         "/translate - Choose a translation language\n"
+        "/vip - Buy VIP status ($1.99/mo or $20/yr)\n"
         "/cancel - Cancel the current operation\n"
         "/help - Show help"
     )
+
+
+# Admin əmri: İstənilən istifadəçiyə VIP vermək üçün: /makevip İSTİFADƏÇİ_ID
+async def make_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Öz Telegram ID-ni buraya yaza bilərsən ki, yalnız sən işlədə biləsən
+    if not context.args:
+        await update.message.reply_text("İstifadəsi: /makevip <user_id>")
+        return
+    
+    target_id = int(context.args[0])
+    conn = sqlite3.connect("users.db")
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET is_vip = 1 WHERE user_id = ?", (target_id,))
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text(f"✅ User {target_id} uğurla VIP edildi!")
 
 
 def main():
@@ -400,16 +547,19 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("single", single))
     app.add_handler(CommandHandler("multiple", multiple))
-    app.add_handler(CommandHandler("create", create_pdf))
+    app.add_handler(CommandHandler.from_user(create_pdf, command="create") if hasattr(CommandHandler, "from_user") else CommandHandler("create", create_pdf))
     app.add_handler(CommandHandler("translate", translate))
+    app.add_handler(CommandHandler("vip", vip_command))
+    app.add_handler(CommandHandler("makevip", make_vip))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("help", help_command))
 
+    app.add_handler(CallbackQueryHandler(select_vip_plan, pattern=r"^buy_"))
     app.add_handler(CallbackQueryHandler(select_language, pattern=r"^lang_"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    logger.info("PDF Master is running with logging and .env support...")
+    logger.info("PDF Master with monetization limits is running...")
     app.run_polling()
 
 
