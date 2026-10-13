@@ -3,9 +3,9 @@ import asyncio
 import logging
 from io import BytesIO
 
+import httpx
 from PIL import Image
 from dotenv import load_dotenv
-from deep_translator import MyMemoryTranslator
 
 from telegram import (
     Update,
@@ -318,11 +318,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = await update.message.reply_text("🌐 Translating...")
 
         try:
-            translator = MyMemoryTranslator(source='autodetect', target=target)
-            result = await asyncio.wait_for(
-                asyncio.to_thread(translator.translate, text),
-                timeout=5.0
-            )
+            url = "https://api.mymemory.translated.net/get"
+            params = {
+                "q": text,
+                "langpair": f"autodetect|{target}"
+            }
+
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                response = await client.get(url, params=params)
+                data = response.json()
+                result = data.get("responseData", {}).get("translatedText", "")
 
             if not result:
                 result = "Translation not found."
@@ -331,7 +336,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🌐 {LANGUAGES[target][0]} translation:\n\n{result}"
             )
 
-        except asyncio.TimeoutError:
+        except httpx.TimeoutError:
             await status.edit_text(
                 "❌ Translation timed out.\n"
                 "Server did not respond in time, please try again."
