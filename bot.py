@@ -5,7 +5,7 @@ from io import BytesIO
 
 from PIL import Image
 from dotenv import load_dotenv
-from deep_translator import GoogleTranslator
+from deep_translator import MyMemoryTranslator
 
 from telegram import (
     Update,
@@ -318,15 +318,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = await update.message.reply_text("🌐 Translating...")
 
         try:
-            # deep-translator istifadə edərək tərcümə
-            translator = GoogleTranslator(source='auto', target=target)
-            result = await asyncio.to_thread(translator.translate, text)
+            translator = MyMemoryTranslator(source='autodetect', target=target)
+            result = await asyncio.wait_for(
+                asyncio.to_thread(translator.translate, text),
+                timeout=5.0
+            )
 
             if not result:
                 result = "Translation not found."
 
             await status.edit_text(
                 f"🌐 {LANGUAGES[target][0]} translation:\n\n{result}"
+            )
+
+        except asyncio.TimeoutError:
+            await status.edit_text(
+                "❌ Translation timed out.\n"
+                "Server did not respond in time, please try again."
             )
 
         except Exception as error:
