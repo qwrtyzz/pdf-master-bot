@@ -3,9 +3,9 @@ import asyncio
 import logging
 from io import BytesIO
 
-import httpx
 from PIL import Image
 from dotenv import load_dotenv
+from deep_translator import GoogleTranslator
 
 from telegram import (
     Update,
@@ -318,35 +318,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = await update.message.reply_text("🌐 Translating...")
 
         try:
-            url = "https://translate.googleapis.com/translate_a/single"
-            params = {
-                "client": "gtx",
-                "sl": "auto",
-                "tl": target,
-                "dt": "t",
-                "q": text,
-            }
-            # İstifadəçi agenti əlavə edildi ki, Google sorğunu bloklamasın
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-            }
-
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                response = await client.get(url, params=params, headers=headers)
-                data = response.json()
-                result = "".join([part[0] for part in data[0] if part and part[0]])
+            # deep-translator istifadə edərək tərcümə
+            translator = GoogleTranslator(source='auto', target=target)
+            result = await asyncio.to_thread(translator.translate, text)
 
             if not result:
                 result = "Translation not found."
 
             await status.edit_text(
                 f"🌐 {LANGUAGES[target][0]} translation:\n\n{result}"
-            )
-
-        except httpx.TimeoutError:
-            await status.edit_text(
-                "❌ Translation timed out.\n"
-                "Server did not respond in time, please try again."
             )
 
         except Exception as error:
