@@ -3,3 +3,4 @@ httpx
 Pillow
 python-dotenv
 deep-translator
+googletrans==4.0.0-rc1
