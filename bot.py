@@ -7,7 +7,7 @@ from io import BytesIO
 
 from PIL import Image
 from dotenv import load_dotenv
-from deep_translator import MyMemoryTranslator
+from deep_translator import GoogleTranslator
 
 from telegram import (
     Update,
@@ -44,6 +44,8 @@ LANGUAGES = {
     "tr": ("Turkish", "tr"),
     "id": ("Indonesian", "id"),
     "ar": ("Arabic", "ar"),
+    "fr": ("French", "fr"),
+    "es": ("Spanish", "es"),
 }
 
 # --- BAZA (DATABASE) TƏNZİMLƏMƏLƏRİ ---
@@ -102,14 +104,6 @@ def check_and_update_limit(user_id: int, action: str):
     conn.close()
     return True, "OK"
 
-def get_vip_status(user_id: int):
-    conn = sqlite3.connect("users.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT is_vip FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return row and row[0] == 1
-
 
 async def setup_commands(app):
     await app.bot.delete_my_commands()
@@ -132,24 +126,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🌍 Welcome to PDF Master!\n\n"
-        "📊 **Pulsuz Limit:** Günlük 3 PDF və 3 Tərcümə.\n"
-        "⭐ Limitsiz istifadə üçün /vip əmrini seçin.\n\n"
+        "📊 **Free Limits:** 3 PDFs and 3 Translations per day.\n"
+        "⭐ Use /vip for unlimited access.\n\n"
         "Use the / command menu to choose a feature."
     )
 
 
 async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = [
-        [InlineKeyboardButton("📅 Aylıq Abunə - $1.99", callback_data="buy_monthly")],
-        [InlineKeyboardButton("🌟 İllik Abunə - $20.00", callback_data="buy_yearly")],
+        [InlineKeyboardButton("📅 Monthly Subscription - $1.99", callback_data="buy_monthly")],
+        [InlineKeyboardButton("🌟 Yearly Subscription - $20.00", callback_data="buy_yearly")],
     ]
     await update.message.reply_text(
-        "💎 **VIP ABUNƏLİK**\n\n"
-        "VIP statusu ilə bütün günlük limitləri qaldırın:\n"
-        "✔️ Sərhədsiz PDF çevirmə\n"
-        "✔️ Sərhədsiz tərcümə\n"
-        "✔️ Prioritet dəstək\n\n"
-        "Plan seçin:",
+        "💎 **VIP SUBSCRIPTION**\n\n"
+        "Remove all daily limits with VIP status:\n"
+        "✔️ Unlimited PDF conversions\n"
+        "✔️ Unlimited translations\n"
+        "✔️ Priority support\n\n"
+        "Select your plan:",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
@@ -157,12 +151,12 @@ async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_vip_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    plan = "Aylıq ($1.99)" if query.data == "buy_monthly" else "İllik ($20.00)"
+    plan = "Monthly ($1.99)" if query.data == "buy_monthly" else "Yearly ($20.00)"
     
     await query.edit_message_text(
-        f"💳 Seçdiyiniz plan: **{plan}**\n\n"
-        "Ödəniş etmək və ya test məqsədilə VIP statusu aktivləşdirmək üçün adminlə əlaqə saxlayın:\n"
-        "👉 @AdminAcarSoz (və ya ödəniş kartı məlumatlarını bura daxil edə bilərsiniz)."
+        f"💳 Selected plan: **{plan}**\n\n"
+        "To complete your payment and activate your VIP status, please contact the administrator:\n"
+        "👉 @AdminAcarSoz"
     )
 
 
@@ -208,6 +202,7 @@ async def translate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("🇸🇦 Arabic", callback_data="lang_ar"),
+            InlineKeyboardButton("🇫🇷 French", callback_data="lang_fr"),
         ],
     ]
 
@@ -272,8 +267,8 @@ async def send_pdf(context, chat_id, user_id, image_data):
     if not allowed:
         await context.bot.send_message(
             chat_id=chat_id,
-            text="❌ Günlük pulsuz PDF limitiniz bitdi (3/3)!\n"
-                 "Sərhədsiz istifadə üçün /vip abunəliyinə keçin."
+            text="❌ Daily free PDF limit reached (3/3)!\n"
+                 "Upgrade to /vip for unlimited access."
         )
         return
 
@@ -312,8 +307,8 @@ async def process_album(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_i
             if not allowed:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text="❌ Günlük pulsuz PDF limitiniz bitdi (3/3)!\n"
-                         "Sərhədsiz istifadə üçün /vip abunəliyinə keçin."
+                    text="❌ Daily free PDF limit reached (3/3)!\n"
+                         "Upgrade to /vip for unlimited access."
                 )
                 return
 
@@ -439,24 +434,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         allowed, status = check_and_update_limit(user_id, "translate")
         if not allowed:
             await update.message.reply_text(
-                "❌ Günlük pulsuz tərcümə limitiniz bitdi (3/3)!\n"
-                "Sərhədsiz istifadə üçün /vip abunəliyinə keçin."
+                "❌ Daily free translation limit reached (3/3)!\n"
+                "Upgrade to /vip for unlimited access."
             )
             return
 
         status_msg = await update.message.reply_text("🌐 Translating...")
 
         try:
-            url = "https://api.mymemory.translated.net/get"
-            params = {
-                "q": text,
-                "langpair": f"autodetect|{target}"
-            }
+            # GoogleTranslator istifadə edərək stabil tərcümə və 4 saniyəlik qoruma
+            def do_translation():
+                translator = GoogleTranslator(source='auto', target=target)
+                return translator.translate(text)
 
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                response = await client.get(url, params=params)
-                data = response.json()
-                result = data.get("responseData", {}).get("translatedText", "")
+            result = await asyncio.wait_for(
+                asyncio.to_thread(do_translation),
+                timeout=4.0
+            )
 
             if not result:
                 result = "Translation not found."
@@ -465,7 +459,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🌐 {LANGUAGES[target][0]} translation:\n\n{result}"
             )
 
-        except httpx.TimeoutError:
+        except asyncio.TimeoutError:
             await status_msg.edit_text(
                 "❌ Translation timed out.\n"
                 "Server did not respond in time, please try again."
@@ -514,11 +508,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# Admin əmri: İstənilən istifadəçiyə VIP vermək üçün: /makevip İSTİFADƏÇİ_ID
 async def make_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Öz Telegram ID-ni buraya yaza bilərsən ki, yalnız sən işlədə biləsən
     if not context.args:
-        await update.message.reply_text("İstifadəsi: /makevip <user_id>")
+        await update.message.reply_text("Usage: /makevip <user_id>")
         return
     
     target_id = int(context.args[0])
@@ -528,7 +520,7 @@ async def make_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
     
-    await update.message.reply_text(f"✅ User {target_id} uğurla VIP edildi!")
+    await update.message.reply_text(f"✅ User {target_id} successfully upgraded to VIP!")
 
 
 def main():
@@ -547,7 +539,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("single", single))
     app.add_handler(CommandHandler("multiple", multiple))
-    app.add_handler(CommandHandler.from_user(create_pdf, command="create") if hasattr(CommandHandler, "from_user") else CommandHandler("create", create_pdf))
+    app.add_handler(CommandHandler("create", create_pdf))
     app.add_handler(CommandHandler("translate", translate))
     app.add_handler(CommandHandler("vip", vip_command))
     app.add_handler(CommandHandler("makevip", make_vip))
@@ -559,7 +551,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    logger.info("PDF Master with monetization limits is running...")
+    logger.info("PDF Master is running with enhanced GoogleTranslator...")
     app.run_polling()
 
 
