@@ -136,8 +136,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = [
-        [InlineKeyboardButton("📅 Monthly Subscription - 100 Stars ($2.39)", callback_data="buy_monthly")],
-        [InlineKeyboardButton("🌟 Yearly Subscription - 500 Stars ($11.99)", callback_data="buy_yearly")],
+        [InlineKeyboardButton("📅 Monthly Subscription - 100 Stars", callback_data="buy_monthly")],
+        [InlineKeyboardButton("🌟 Yearly Subscription - 500 Stars", callback_data="buy_yearly")],
     ]
     await update.message.reply_text(
         "💎 **VIP SUBSCRIPTION**\n\n"
@@ -160,12 +160,12 @@ async def select_vip_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title = "Monthly VIP Subscription"
         description = "Unlimited PDF conversions and translations for 1 month."
         payload = "monthly_vip"
-        prices = [LabeledPrice("Monthly VIP", 100)]  # 100 Stars ($2.39)
+        prices = [LabeledPrice("Monthly VIP", 100)]  # 100 Stars
     else:
         title = "Yearly VIP Subscription"
         description = "Unlimited PDF conversions and translations for 1 year."
         payload = "yearly_vip"
-        prices = [LabeledPrice("Yearly VIP", 500)]  # 500 Stars ($11.99)
+        prices = [LabeledPrice("Yearly VIP", 500)]  # 500 Stars
 
     try:
         await context.bot.send_invoice(
