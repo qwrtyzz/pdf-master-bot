@@ -160,29 +160,27 @@ async def select_vip_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title = "Monthly VIP Subscription"
         description = "Unlimited PDF conversions and translations for 1 month."
         payload = "monthly_vip"
-        prices = [LabeledPrice("Monthly VIP", 100)]  # 100 Telegram Stars
+        prices = [LabeledPrice("Monthly VIP", 100)]  # 100 Stars
     else:
         title = "Yearly VIP Subscription"
         description = "Unlimited PDF conversions and translations for 1 year."
         payload = "yearly_vip"
-        prices = [LabeledPrice("Yearly VIP", 999)]  # 999 Telegram Stars
+        prices = [LabeledPrice("Yearly VIP", 999)]  # 999 Stars
 
     try:
-        # Telegram Stars üçün provider_token parametrik ötürülmür
+        # Telegram Stars (XTR) ödənişlərində provider_token ötürülmür
         await context.bot.send_invoice(
             chat_id=chat_id,
             title=title,
             description=description,
             payload=payload,
-            currency="XTR",  # Telegram Stars valyutası
+            currency="XTR",
             prices=prices,
         )
     except Exception as e:
         logger.error(f"Invoice error: {e}")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ Auto-payment setup is completing.\n\n"
-                 "To activate VIP immediately, please contact administrator: @AdminAcarSoz"
+        await update.message.reply_text(
+            f"❌ Ödəniş xətası: {e}\nZəhmət olmasa adminə yazın: @AdminAcarSoz"
         )
 
 
@@ -557,7 +555,9 @@ async def make_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /makevip <user_id>")
         return
     
+    chat_id = update.effective_chat.id
     target_id = int(context.args[0])
+    
     conn = sqlite3.connect("users.db")
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET is_vip = 1 WHERE user_id = ?", (target_id,))
