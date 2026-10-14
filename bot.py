@@ -168,7 +168,7 @@ async def select_vip_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prices = [LabeledPrice("Yearly VIP", 999)]  # 999 Stars
 
     try:
-        # Telegram Stars (XTR) ödənişlərində provider_token ötürülmür
+        # Telegram Stars ödənişi üçün provider_token mütləq boş string olmalıdır
         await context.bot.send_invoice(
             chat_id=chat_id,
             title=title,
@@ -176,11 +176,13 @@ async def select_vip_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             payload=payload,
             currency="XTR",
             prices=prices,
+            provider_token="",
         )
     except Exception as e:
         logger.error(f"Invoice error: {e}")
-        await update.message.reply_text(
-            f"❌ Ödəniş xətası: {e}\nZəhmət olmasa adminə yazın: @AdminAcarSoz"
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"❌ Ödəniş xətası: {e}"
         )
 
 
@@ -555,9 +557,7 @@ async def make_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /makevip <user_id>")
         return
     
-    chat_id = update.effective_chat.id
     target_id = int(context.args[0])
-    
     conn = sqlite3.connect("users.db")
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET is_vip = 1 WHERE user_id = ?", (target_id,))
