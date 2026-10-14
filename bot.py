@@ -14,12 +14,14 @@ from telegram import (
     BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    LabeledPrice,
 )
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
+    PreCheckoutQueryHandler,
     ContextTypes,
     filters,
 )
@@ -134,8 +136,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = [
-        [InlineKeyboardButton("📅 Monthly Subscription - $1.99", callback_data="buy_monthly")],
-        [InlineKeyboardButton("🌟 Yearly Subscription - $20.00", callback_data="buy_yearly")],
+        [InlineKeyboardButton("📅 Monthly Subscription - 100 Stars ($1.99)", callback_data="buy_monthly")],
+        [InlineKeyboardButton("🌟 Yearly Subscription - 999 Stars ($20.00)", callback_data="buy_yearly")],
     ]
     await update.message.reply_text(
         "💎 **VIP SUBSCRIPTION**\n\n"
@@ -151,12 +153,45 @@ async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_vip_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    plan = "Monthly ($1.99)" if query.data == "buy_monthly" else "Yearly ($20.00)"
     
-    await query.edit_message_text(
-        f"💳 Selected plan: **{plan}**\n\n"
-        "To complete your payment and activate your VIP status, please contact the administrator:\n"
-        "👉 @AdminAcarSoz"
+    if query.data == "buy_monthly":
+        title = "Monthly VIP Subscription"
+        description = "Unlimited PDF conversions and translations for 1 month."
+        payload = "monthly_vip"
+        prices = [LabeledPrice("Monthly VIP", 100)] # 100 Telegram Stars (~$1.99)
+    else:
+        title = "Yearly VIP Subscription"
+        description = "Unlimited PDF conversions and translations for 1 year."
+        payload = "yearly_vip"
+        prices = [LabeledPrice("Yearly VIP", 999)] # 999 Telegram Stars (~$20.00)
+
+    await context.bot.send_invoice(
+        chat_id=query.message.chat_id,
+        title=title,
+        description=description,
+        payload=payload,
+        currency="XTR",  # Telegram Stars valyuta kodu
+        prices=prices,
+    )
+
+
+async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.pre_checkout_query
+    await query.answer(ok=True)
+
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    conn = sqlite3.connect("users.db")
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET is_vip = 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text(
+        "🎉 **Payment Successful!**\n\n"
+        "Thank you! Your account has been automatically upgraded to **VIP** status. Enjoy unlimited access! 🚀"
     )
 
 
@@ -430,7 +465,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Limit yoxlanışı
         allowed, status = check_and_update_limit(user_id, "translate")
         if not allowed:
             await update.message.reply_text(
@@ -442,7 +476,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_msg = await update.message.reply_text("🌐 Translating...")
 
         try:
-            # GoogleTranslator istifadə edərək stabil tərcümə və 4 saniyəlik qoruma
             def do_translation():
                 translator = GoogleTranslator(source='auto', target=target)
                 return translator.translate(text)
@@ -502,7 +535,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/multiple - Collect photos into one PDF\n"
         "/create - Create one PDF from collected photos\n"
         "/translate - Choose a translation language\n"
-        "/vip - Buy VIP status ($1.99/mo or $20/yr)\n"
+        "/vip - Buy VIP status (Monthly/Yearly via Stars)\n"
         "/cancel - Cancel the current operation\n"
         "/help - Show help"
     )
@@ -548,10 +581,15 @@ def main():
 
     app.add_handler(CallbackQueryHandler(select_vip_plan, pattern=r"^buy_"))
     app.add_handler(CallbackQueryHandler(select_language, pattern=r"^lang_"))
+    
+    # Telegram Stars ödəniş handlerləri
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    logger.info("PDF Master is running with enhanced GoogleTranslator...")
+    logger.info("PDF Master is running with Telegram Stars automated payments...")
     app.run_polling()
 
 
