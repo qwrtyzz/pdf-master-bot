@@ -501,3 +501,54 @@ async def make_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: /makevip <user_id>")
         return
+    
+    target_id = int(context.args[0])
+    conn = sqlite3.connect("users.db")
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET is_vip = 1 WHERE user_id = ?", (target_id,))
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text(f"✅ User {target_id} successfully upgraded to VIP!")
+
+
+def main():
+    if not TOKEN:
+        raise RuntimeError(
+            "PDF_MASTER_TOKEN is missing. Make sure your .env file is configured correctly."
+        )
+
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .post_init(setup_commands)
+        .build()
+    )
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("single", single))
+    app.add_handler(CommandHandler("multiple", multiple))
+    app.add_handler(CommandHandler("create", create_pdf))
+    app.add_handler(CommandHandler("translate", translate))
+    app.add_handler(CommandHandler("vip", vip_command))
+    app.add_handler(CommandHandler("makevip", make_vip))
+    app.add_handler(CommandHandler("cancel", cancel))
+    app.add_handler(CommandHandler("help", help_command))
+
+    app.add_handler(CallbackQueryHandler(select_vip_plan, pattern=r"^buy_"))
+    app.add_handler(CallbackQueryHandler(select_language, pattern=r"^lang_"))
+    
+    # Ödəniş handlerləri (payment.py-dan)
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    logger.info("PDF Master is running...")
+    # drop_pending_updates=True əlavə olundu ki, köhnə sorğular təmizlənsin və bot dərhal cavab versin
+    app.run_polling(drop_pending_updates=True)
+
+
+if __name__ == "__main__":
+    main()
