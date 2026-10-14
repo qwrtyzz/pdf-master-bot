@@ -7,7 +7,7 @@ from io import BytesIO
 
 from PIL import Image
 from dotenv import load_dotenv
-from deep_translator import GoogleTranslator
+from deep_translator import GoogleTranslator, MyMemoryTranslator, SingleAITranslator
 
 from telegram import (
     Update,
@@ -25,7 +25,7 @@ from telegram.ext import (
     filters,
 )
 
-# Ödəniş modulundan yalnız funksiyaları import edirik
+# Ödəniş modulundan funksiyaları import edirik
 from payment import (
     vip_command,
     select_vip_plan,
@@ -421,12 +421,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             def do_translation():
-                translator = GoogleTranslator(source='auto', target=target)
-                return translator.translate(text)
+                # Primary: MyMemoryTranslator (Limitə düşmür və sabitdir)
+                try:
+                    translator = MyMemoryTranslator(source='auto', target=target)
+                    res = translator.translate(text)
+                    if res and not res.startswith("MYMEMORY WARNING"):
+                        return res
+                except Exception as e:
+                    logger.warning(f"MyMemory failed: {e}, falling back to Google...")
+
+                # Fallback: GoogleTranslator
+                try:
+                    translator = GoogleTranslator(source='auto', target=target)
+                    return translator.translate(text)
+                except Exception as e:
+                    logger.error(f"GoogleTranslator failed: {e}")
+                    raise e
 
             result = await asyncio.wait_for(
                 asyncio.to_thread(do_translation),
-                timeout=4.0
+                timeout=6.0
             )
 
             if not result:
@@ -446,7 +460,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Translation failed: {error}")
             await status_msg.edit_text(
                 "❌ Translation failed.\n"
-                f"Error: {type(error).__name__}: {error}"
+                "Please wait a few seconds and try sending the text again."
             )
         return
 
@@ -526,14 +540,14 @@ def main():
     app.add_handler(CallbackQueryHandler(select_vip_plan, pattern=r"^buy_"))
     app.add_handler(CallbackQueryHandler(select_language, pattern=r"^lang_"))
     
-    # Ödəniş handlerləri (payment.py-dan idarə olunur)
+    # Ödəniş handlerləri (payment.py-dan)
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    logger.info("PDF Master is running with modular structure...")
+    logger.info("PDF Master is running with robust fallback translation system...")
     app.run_polling()
 
 
