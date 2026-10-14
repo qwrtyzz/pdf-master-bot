@@ -7,7 +7,7 @@ from io import BytesIO
 
 from PIL import Image
 from dotenv import load_dotenv
-from deep_translator import GoogleTranslator, MyMemoryTranslator, SingleAITranslator
+from deep_translator import GoogleTranslator, MyMemoryTranslator
 
 from telegram import (
     Update,
@@ -421,7 +421,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             def do_translation():
-                # Primary: MyMemoryTranslator (Limitə düşmür və sabitdir)
                 try:
                     translator = MyMemoryTranslator(source='auto', target=target)
                     res = translator.translate(text)
@@ -430,7 +429,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.warning(f"MyMemory failed: {e}, falling back to Google...")
 
-                # Fallback: GoogleTranslator
                 try:
                     translator = GoogleTranslator(source='auto', target=target)
                     return translator.translate(text)
@@ -503,53 +501,3 @@ async def make_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: /makevip <user_id>")
         return
-    
-    target_id = int(context.args[0])
-    conn = sqlite3.connect("users.db")
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET is_vip = 1 WHERE user_id = ?", (target_id,))
-    conn.commit()
-    conn.close()
-    
-    await update.message.reply_text(f"✅ User {target_id} successfully upgraded to VIP!")
-
-
-def main():
-    if not TOKEN:
-        raise RuntimeError(
-            "PDF_MASTER_TOKEN is missing. Make sure your .env file is configured correctly."
-        )
-
-    app = (
-        Application.builder()
-        .token(TOKEN)
-        .post_init(setup_commands)
-        .build()
-    )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("single", single))
-    app.add_handler(CommandHandler("multiple", multiple))
-    app.add_handler(CommandHandler("create", create_pdf))
-    app.add_handler(CommandHandler("translate", translate))
-    app.add_handler(CommandHandler("vip", vip_command))
-    app.add_handler(CommandHandler("makevip", make_vip))
-    app.add_handler(CommandHandler("cancel", cancel))
-    app.add_handler(CommandHandler("help", help_command))
-
-    app.add_handler(CallbackQueryHandler(select_vip_plan, pattern=r"^buy_"))
-    app.add_handler(CallbackQueryHandler(select_language, pattern=r"^lang_"))
-    
-    # Ödəniş handlerləri (payment.py-dan)
-    app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
-    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
-
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-    logger.info("PDF Master is running with robust fallback translation system...")
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
